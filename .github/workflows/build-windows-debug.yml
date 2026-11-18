@@ -10,8 +10,78 @@ env:
   CCACHE_COMPILERCHECK: "%compiler% -v"
 
 jobs:
+  # =========================================================================
+  # JOB 1: Compile and Cache VCPKG Dependencies (Beats the 6-hour timeout)
+  # =========================================================================
+  prepare-dependencies:
+    name: Prepare & Cache Debug Dependencies
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout Upstream Ladybird Code
+        uses: actions/checkout@v4
+        with:
+          repository: 'LadybirdBrowser/ladybird'
+          ref: 'master'
+
+      - name: Set Up Environment
+        uses: ./.github/actions/setup
+        with:
+          os: 'Windows'
+          arch: 'x86_64'
+          toolchain: 'ClangCL'
+          build_preset: 'Debug'
+
+      - name: Restore Caches
+        uses: ./.github/actions/cache-restore
+        id: 'cache-restore'
+        with:
+          os: 'Windows'
+          arch: 'x86_64'
+          toolchain: 'ClangCL'
+          cache_key_extra: 'Windows_CI_Debug'
+          ccache_path: ${{ env.CCACHE_DIR }}
+          sccache_path: ${{ github.workspace }}/.sccache
+          vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
+
+      # Pre-build patch for CrashReport unused variable
+      - name: Patch Unused Variable Warnings
+        run: |
+          $file = "Libraries/LibWebView/CrashReport.cpp"
+          if (Test-Path $file) {
+              (Get-Content $file) -replace 'static DisableSandbox s_disable_sandbox', '[[maybe_unused]] static DisableSandbox s_disable_sandbox' | Set-Content $file
+          }
+
+      - name: Configure CMake (Compiles VCPKG Dependencies)
+        working-directory: ${{ github.workspace }}
+        run: |
+          cmake --preset Debug -B Build `
+            -DENABLE_CI_BASELINE_CPU=ON `
+            -DENABLE_TESTS=OFF `
+            -DBUILD_TESTING=OFF `
+            -DENABLE_LAGOM_TESTS=OFF
+
+      # Immediately save the compiled vcpkg binaries before any timeout can hit!
+      - name: Save Dependencies to Cache
+        uses: ./.github/actions/cache-save
+        with:
+          arch: 'x86_64'
+          ccache_path: ${{ env.CCACHE_DIR }}
+          ccache_primary_key: ${{ steps.cache-restore.outputs.ccache_primary_key }}
+          sccache_path: ${{ github.workspace }}/.sccache
+          sccache_primary_key: ${{ steps.cache-restore.outputs.sccache_primary_key }}
+          vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
+          vcpkg_cache_primary_key: ${{ steps.cache-restore.outputs.vcpkg_cache_primary_key }}
+
+  # =========================================================================
+  # JOB 2: Build Ladybird & Package Release
+  # =========================================================================
   build-windows-debug:
-    name: Windows Debug Build
+    name: Build & Package Ladybird
+    needs: prepare-dependencies
     runs-on: windows-latest
     permissions:
       contents: write
@@ -41,7 +111,8 @@ jobs:
           toolchain: 'ClangCL'
           build_preset: 'Debug'
 
-      - name: Restore Caches
+      # Restores the cache saved by Job 1 in ~2 minutes!
+      - name: Restore Cached Dependencies
         uses: ./.github/actions/cache-restore
         id: 'cache-restore'
         with:
@@ -53,7 +124,6 @@ jobs:
           sccache_path: ${{ github.workspace }}/.sccache
           vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
 
-      # Pre-build patch: Prevents unused variable compiler warnings from breaking the build
       - name: Patch Unused Variable Warnings
         run: |
           $file = "Libraries/LibWebView/CrashReport.cpp"
@@ -84,42 +154,34 @@ jobs:
 
           if (!(Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir }
 
-          # 1. Copy VCPKG Debug DLLs
           Write-Host "Copying VCPKG debug dependencies..."
           Copy-Item "$buildDir/vcpkg_installed/x64-windows/debug/bin/*.dll" -Destination $binDir -Force -ErrorAction SilentlyContinue
 
-          # 2. Copy .pdb Symbol Files (Crucial for debugging!)
           Write-Host "Copying PDB debug symbols..."
           Copy-Item "$buildDir/bin/*.pdb" -Destination $binDir -Force -ErrorAction SilentlyContinue
 
-          # 3. Find and copy Debug Qt Platform Plugin (qwindowsd.dll)
           Write-Host "Searching for qwindows plugin..."
           $qwindowsFile = Get-ChildItem -Path "$buildDir/vcpkg_installed" -Recurse -Filter "qwindows*.dll" | Where-Object { $_.FullName -like "*debug*" } | Select-Object -First 1
           if ($qwindowsFile) {
              $destPlatforms = "$binDir/platforms"
              New-Item -ItemType Directory -Force -Path $destPlatforms
-             Write-Host "Found qwindows at $($qwindowsFile.FullName)"
              Copy-Item $qwindowsFile.FullName -Destination $destPlatforms -Force
           }
 
-          # 4. Find and copy Debug Qt Image Formats (qjpegd.dll, etc.)
           Write-Host "Searching for Qt Image Formats..."
           $qjpegFile = Get-ChildItem -Path "$buildDir/vcpkg_installed" -Recurse -Filter "qjpeg*.dll" | Where-Object { $_.FullName -like "*debug*" } | Select-Object -First 1
           if ($qjpegFile) {
              $destImgFormats = "$binDir/imageformats"
              New-Item -ItemType Directory -Force -Path $destImgFormats
-             Write-Host "Found imageformats at $($qjpegFile.DirectoryName)"
              Copy-Item "$($qjpegFile.DirectoryName)/*.dll" -Destination $destImgFormats -Force
           }
 
-          # 5. Flatten libexec
           if (Test-Path "$installDir/libexec") {
               Write-Host "Moving helper executables..."
               Copy-Item "$installDir/libexec/*.exe" -Destination $binDir -Force
               Remove-Item "$installDir/libexec" -Recurse -Force
           }
           
-          # Clean headers and lib files to keep zip smaller
           Remove-Item -Path "$installDir/include" -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -Path "$installDir/lib" -Recurse -Force -ErrorAction SilentlyContinue
 
