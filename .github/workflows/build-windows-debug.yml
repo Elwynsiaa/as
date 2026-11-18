@@ -1,0 +1,172 @@
+name: Build win32 Debug (.exe)
+
+on:
+  workflow_dispatch:
+
+env:
+  LADYBIRD_SOURCE_DIR: ${{ github.workspace }}
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg-debug
+  CCACHE_COMPILERCHECK: "%compiler% -v"
+
+jobs:
+  build-windows-debug:
+    name: Windows Debug Build
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - name: Checkout Upstream Ladybird Code
+        uses: actions/checkout@v4
+        with:
+          repository: 'LadybirdBrowser/ladybird'
+          ref: 'master'
+
+      - name: Get Upstream Commit Hash
+        id: upstream_info
+        run: |
+          $shortSha = git rev-parse --short HEAD
+          echo "UPSTREAM_SHA=$shortSha" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - name: Set Up Environment
+        uses: ./.github/actions/setup
+        with:
+          os: 'Windows'
+          arch: 'x86_64'
+          toolchain: 'ClangCL'
+          build_preset: 'Debug'
+
+      - name: Restore Caches
+        uses: ./.github/actions/cache-restore
+        id: 'cache-restore'
+        with:
+          os: 'Windows'
+          arch: 'x86_64'
+          toolchain: 'ClangCL'
+          cache_key_extra: 'Windows_CI_Debug'
+          ccache_path: ${{ env.CCACHE_DIR }}
+          sccache_path: ${{ github.workspace }}/.sccache
+          vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
+
+      # Pre-build patch: Prevents unused variable compiler warnings from breaking the build
+      - name: Patch Unused Variable Warnings
+        run: |
+          $file = "Libraries/LibWebView/CrashReport.cpp"
+          if (Test-Path $file) {
+              (Get-Content $file) -replace 'static DisableSandbox s_disable_sandbox', '[[maybe_unused]] static DisableSandbox s_disable_sandbox' | Set-Content $file
+          }
+
+      - name: Configure CMake
+        working-directory: ${{ github.workspace }}
+        run: |
+          cmake --preset Debug -B Build `
+            -DENABLE_CI_BASELINE_CPU=ON `
+            -DENABLE_TESTS=OFF `
+            -DBUILD_TESTING=OFF `
+            -DENABLE_LAGOM_TESTS=OFF
+
+      - name: Build
+        working-directory: ${{ github.workspace }}/Build
+        run: |
+          cmake --build .
+          cmake --install . --prefix ${{ github.workspace }}/Install
+
+      - name: Bundle Debug DLLs & Symbols
+        run: |
+          $installDir = "${{ github.workspace }}/Install"
+          $binDir = "$installDir/bin"
+          $buildDir = "${{ github.workspace }}/Build"
+
+          if (!(Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir }
+
+          # 1. Copy VCPKG Debug DLLs
+          Write-Host "Copying VCPKG debug dependencies..."
+          Copy-Item "$buildDir/vcpkg_installed/x64-windows/debug/bin/*.dll" -Destination $binDir -Force -ErrorAction SilentlyContinue
+
+          # 2. Copy .pdb Symbol Files (Crucial for debugging!)
+          Write-Host "Copying PDB debug symbols..."
+          Copy-Item "$buildDir/bin/*.pdb" -Destination $binDir -Force -ErrorAction SilentlyContinue
+
+          # 3. Find and copy Debug Qt Platform Plugin (qwindowsd.dll)
+          Write-Host "Searching for qwindows plugin..."
+          $qwindowsFile = Get-ChildItem -Path "$buildDir/vcpkg_installed" -Recurse -Filter "qwindows*.dll" | Where-Object { $_.FullName -like "*debug*" } | Select-Object -First 1
+          if ($qwindowsFile) {
+             $destPlatforms = "$binDir/platforms"
+             New-Item -ItemType Directory -Force -Path $destPlatforms
+             Write-Host "Found qwindows at $($qwindowsFile.FullName)"
+             Copy-Item $qwindowsFile.FullName -Destination $destPlatforms -Force
+          }
+
+          # 4. Find and copy Debug Qt Image Formats (qjpegd.dll, etc.)
+          Write-Host "Searching for Qt Image Formats..."
+          $qjpegFile = Get-ChildItem -Path "$buildDir/vcpkg_installed" -Recurse -Filter "qjpeg*.dll" | Where-Object { $_.FullName -like "*debug*" } | Select-Object -First 1
+          if ($qjpegFile) {
+             $destImgFormats = "$binDir/imageformats"
+             New-Item -ItemType Directory -Force -Path $destImgFormats
+             Write-Host "Found imageformats at $($qjpegFile.DirectoryName)"
+             Copy-Item "$($qjpegFile.DirectoryName)/*.dll" -Destination $destImgFormats -Force
+          }
+
+          # 5. Flatten libexec
+          if (Test-Path "$installDir/libexec") {
+              Write-Host "Moving helper executables..."
+              Copy-Item "$installDir/libexec/*.exe" -Destination $binDir -Force
+              Remove-Item "$installDir/libexec" -Recurse -Force
+          }
+          
+          # Clean headers and lib files to keep zip smaller
+          Remove-Item -Path "$installDir/include" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "$installDir/lib" -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Zip Release Artifacts
+        run: |
+          Compress-Archive -Path ${{ github.workspace }}/Install/* -DestinationPath Ladybird-Windows-Debug.zip -Force
+        shell: pwsh
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ladybird-Windows-Debug
+          path: Ladybird-Windows-Debug.zip
+          if-no-files-found: error
+
+      - name: Set Release Variables
+        id: set_vars
+        run: |
+          $releaseDate = Get-Date -Format "yyyyMMdd"
+          $releaseTag = "v${releaseDate}-debug-${{ github.run_number }}"
+          $releaseName = "Debug Release ${releaseDate} (Run ${{ github.run_number }})"
+          echo "RELEASE_TAG=$releaseTag" >> $env:GITHUB_ENV
+          echo "RELEASE_NAME=$releaseName" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          body: |
+            Automated Debug build tracking upstream commit LadybirdBrowser/ladybird@${{ env.UPSTREAM_SHA }}.
+            Includes full PDB symbols for crash inspection.
+          draft: false
+          prerelease: true
+          files: |
+            Ladybird-Windows-Debug.zip
+
+      - name: Save Caches
+        uses: ./.github/actions/cache-save
+        with:
+          arch: 'x86_64'
+          ccache_path: ${{ env.CCACHE_DIR }}
+          ccache_primary_key: ${{ steps.cache-restore.outputs.ccache_primary_key }}
+          sccache_path: ${{ github.workspace }}/.sccache
+          sccache_primary_key: ${{ steps.cache-restore.outputs.sccache_primary_key }}
+          vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
+          vcpkg_cache_primary_key: ${{ steps.cache-restore.outputs.vcpkg_cache_primary_key }}
