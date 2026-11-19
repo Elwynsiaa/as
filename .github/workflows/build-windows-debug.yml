@@ -144,50 +144,24 @@ jobs:
         working-directory: ${{ github.workspace }}/Build
         run: |
           cmake --build .
-          cmake --install . --prefix ${{ github.workspace }}/Install
 
-      - name: Bundle Debug DLLs & Symbols
+      - name: Bundle Debug Package
         run: |
-          $installDir = "${{ github.workspace }}/Install"
-          $binDir = "$installDir/bin"
-          $buildDir = "${{ github.workspace }}/Build"
+          $binDir = "${{ github.workspace }}/Build/bin"
+          $libexecDir = "${{ github.workspace }}/Build/libexec"
 
-          if (!(Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir }
-
-          Write-Host "Copying VCPKG debug dependencies..."
-          Copy-Item "$buildDir/vcpkg_installed/x64-windows/debug/bin/*.dll" -Destination $binDir -Force -ErrorAction SilentlyContinue
-
-          Write-Host "Copying PDB debug symbols..."
-          Copy-Item "$buildDir/bin/*.pdb" -Destination $binDir -Force -ErrorAction SilentlyContinue
-
-          Write-Host "Searching for qwindows plugin..."
-          $qwindowsFile = Get-ChildItem -Path "$buildDir/vcpkg_installed" -Recurse -Filter "qwindows*.dll" | Where-Object { $_.FullName -like "*debug*" } | Select-Object -First 1
-          if ($qwindowsFile) {
-             $destPlatforms = "$binDir/platforms"
-             New-Item -ItemType Directory -Force -Path $destPlatforms
-             Copy-Item $qwindowsFile.FullName -Destination $destPlatforms -Force
+          if (Test-Path $libexecDir) {
+              Write-Host "Moving helper executables from libexec to bin..."
+              Copy-Item "$libexecDir/*.exe" -Destination $binDir -Force
+              Copy-Item "$libexecDir/*.pdb" -Destination $binDir -Force -ErrorAction SilentlyContinue
           }
 
-          Write-Host "Searching for Qt Image Formats..."
-          $qjpegFile = Get-ChildItem -Path "$buildDir/vcpkg_installed" -Recurse -Filter "qjpeg*.dll" | Where-Object { $_.FullName -like "*debug*" } | Select-Object -First 1
-          if ($qjpegFile) {
-             $destImgFormats = "$binDir/imageformats"
-             New-Item -ItemType Directory -Force -Path $destImgFormats
-             Copy-Item "$($qjpegFile.DirectoryName)/*.dll" -Destination $destImgFormats -Force
-          }
+          Remove-Item "$binDir/icuin78.dll" -Force -ErrorAction SilentlyContinue
+          Remove-Item "$binDir/icuuc78.dll" -Force -ErrorAction SilentlyContinue
+          Remove-Item "$binDir/jpeg62.dll" -Force -ErrorAction SilentlyContinue
 
-          if (Test-Path "$installDir/libexec") {
-              Write-Host "Moving helper executables..."
-              Copy-Item "$installDir/libexec/*.exe" -Destination $binDir -Force
-              Remove-Item "$installDir/libexec" -Recurse -Force
-          }
-          
-          Remove-Item -Path "$installDir/include" -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item -Path "$installDir/lib" -Recurse -Force -ErrorAction SilentlyContinue
-
-      - name: Zip Release Artifacts
-        run: |
-          Compress-Archive -Path ${{ github.workspace }}/Install/* -DestinationPath Ladybird-Windows-Debug.zip -Force
+          Write-Host "Compressing Debug package..."
+          Compress-Archive -Path "$binDir/*" -DestinationPath "${{ github.workspace }}/Ladybird-Windows-Debug.zip" -Force
         shell: pwsh
 
       - name: Upload Windows Artifact
