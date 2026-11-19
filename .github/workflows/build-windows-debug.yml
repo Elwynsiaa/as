@@ -10,9 +10,6 @@ env:
   CCACHE_COMPILERCHECK: "%compiler% -v"
 
 jobs:
-  # =========================================================================
-  # JOB 1: Compile and Cache VCPKG Dependencies (Beats the 6-hour timeout)
-  # =========================================================================
   prepare-dependencies:
     name: Prepare & Cache Debug Dependencies
     runs-on: windows-latest
@@ -47,7 +44,6 @@ jobs:
           sccache_path: ${{ github.workspace }}/.sccache
           vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
 
-      # Pre-build patch for CrashReport unused variable
       - name: Patch Unused Variable Warnings
         run: |
           $file = "Libraries/LibWebView/CrashReport.cpp"
@@ -64,7 +60,6 @@ jobs:
             -DBUILD_TESTING=OFF `
             -DENABLE_LAGOM_TESTS=OFF
 
-      # Immediately save the compiled vcpkg binaries before any timeout can hit!
       - name: Save Dependencies to Cache
         uses: ./.github/actions/cache-save
         with:
@@ -76,9 +71,6 @@ jobs:
           vcpkg_cache_path: ${{ github.workspace }}/Build/caches/vcpkg-binary-cache
           vcpkg_cache_primary_key: ${{ steps.cache-restore.outputs.vcpkg_cache_primary_key }}
 
-  # =========================================================================
-  # JOB 2: Build Ladybird & Package Release
-  # =========================================================================
   build-windows-debug:
     name: Build & Package Ladybird
     needs: prepare-dependencies
@@ -111,7 +103,6 @@ jobs:
           toolchain: 'ClangCL'
           build_preset: 'Debug'
 
-      # Restores the cache saved by Job 1 in ~2 minutes!
       - name: Restore Cached Dependencies
         uses: ./.github/actions/cache-restore
         id: 'cache-restore'
@@ -145,23 +136,44 @@ jobs:
         run: |
           cmake --build .
 
-      - name: Bundle Debug Package
+      - name: Bundle Complete Debug Package
         run: |
-          $binDir = "${{ github.workspace }}/Build/bin"
-          $libexecDir = "${{ github.workspace }}/Build/libexec"
+          $buildDir = "${{ github.workspace }}/Build"
+          $binDir = "$buildDir/bin"
+          $libexecDir = "$buildDir/libexec"
+          $packageDir = "${{ github.workspace }}/Package"
+
+          New-Item -ItemType Directory -Force -Path "$packageDir/bin"
+          New-Item -ItemType Directory -Force -Path "$packageDir/share"
 
           if (Test-Path $libexecDir) {
               Write-Host "Moving helper executables from libexec to bin..."
-              Copy-Item "$libexecDir/*.exe" -Destination $binDir -Force
+              Copy-Item "$libexecDir/*.exe" -Destination $binDir -Force -ErrorAction SilentlyContinue
               Copy-Item "$libexecDir/*.pdb" -Destination $binDir -Force -ErrorAction SilentlyContinue
           }
 
-          Remove-Item "$binDir/icuin78.dll" -Force -ErrorAction SilentlyContinue
-          Remove-Item "$binDir/icuuc78.dll" -Force -ErrorAction SilentlyContinue
-          Remove-Item "$binDir/jpeg62.dll" -Force -ErrorAction SilentlyContinue
+          $vcpkgDebugBin = "$buildDir/vcpkg_installed/x64-windows/debug/bin"
+          if (Test-Path $vcpkgDebugBin) {
+              Write-Host "Copying vcpkg debug DLLs..."
+              Copy-Item "$vcpkgDebugBin/*.dll" -Destination $binDir -Force -ErrorAction SilentlyContinue
+          }
 
-          Write-Host "Compressing Debug package..."
-          Compress-Archive -Path "$binDir/*" -DestinationPath "${{ github.workspace }}/Ladybird-Windows-Debug.zip" -Force
+          Write-Host "Staging bin directory into package..."
+          Copy-Item "$binDir/*" -Destination "$packageDir/bin" -Recurse -Force
+
+          if (Test-Path "$buildDir/share") {
+              Write-Host "Staging share directory into package..."
+              Copy-Item "$buildDir/share/*" -Destination "$packageDir/share" -Recurse -Force
+          }
+
+          $icuFile = Get-ChildItem -Path "$buildDir" -Recurse -Filter "icudt*.dat" | Select-Object -First 1
+          if ($icuFile) {
+              Write-Host "Placing ICU data file directly into bin root ($($icuFile.Name))..."
+              Copy-Item $icuFile.FullName -Destination "$packageDir/bin" -Force
+          }
+
+          Write-Host "Compressing complete Debug package..."
+          Compress-Archive -Path "$packageDir/*" -DestinationPath "${{ github.workspace }}/Ladybird-Windows-Debug.zip" -Force
         shell: pwsh
 
       - name: Upload Windows Artifact
@@ -190,7 +202,7 @@ jobs:
           name: ${{ env.RELEASE_NAME }}
           body: |
             Automated Debug build tracking upstream commit LadybirdBrowser/ladybird@${{ env.UPSTREAM_SHA }}.
-            Includes full PDB symbols for crash inspection.
+            Includes full PDB symbols for crash inspection and diagnosis.
           draft: false
           prerelease: true
           files: |
