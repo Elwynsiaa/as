@@ -9,10 +9,6 @@ env:
   VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg-debug
   CCACHE_COMPILERCHECK: "%compiler% -v"
 
-  _CL_: "/D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"
-  CL: "/D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"
-  VCPKG_KEEP_ENV_VARS: "_CL_;CL"
-
 jobs:
   prepare-dependencies:
     name: Prepare & Cache Debug Dependencies
@@ -28,6 +24,12 @@ jobs:
           repository: 'LadybirdBrowser/ladybird'
           ref: 'master'
 
+      - name: Install Latest LLVM
+        run: |
+          choco install -y llvm --no-progress
+          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+        shell: pwsh
+          
       - name: Set Up Environment
         uses: ./.github/actions/setup
         with:
@@ -99,6 +101,12 @@ jobs:
           echo "UPSTREAM_SHA=$shortSha" >> $env:GITHUB_ENV
         shell: pwsh
 
+      - name: Install Latest LLVM
+        run: |
+          choco install -y llvm --no-progress
+          echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+        shell: pwsh
+        
       - name: Set Up Environment
         uses: ./.github/actions/setup
         with:
