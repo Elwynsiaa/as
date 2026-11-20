@@ -9,6 +9,10 @@ env:
   VCPKG_ROOT: ${{ github.workspace }}/Build/vcpkg-debug
   CCACHE_COMPILERCHECK: "%compiler% -v"
 
+  _CL_: "/D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"
+  CL: "/D_ALLOW_COMPILER_AND_STL_VERSION_MISMATCH"
+  VCPKG_KEEP_ENV_VARS: "_CL_;CL"
+
 jobs:
   prepare-dependencies:
     name: Prepare & Cache Debug Dependencies
