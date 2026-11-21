@@ -155,9 +155,6 @@ jobs:
           $libexecDir = "$buildDir/libexec"
           $packageDir = "${{ github.workspace }}/Package"
 
-          New-Item -ItemType Directory -Force -Path "$packageDir/bin"
-          New-Item -ItemType Directory -Force -Path "$packageDir/share"
-
           if (Test-Path $libexecDir) {
               Write-Host "Moving helper executables from libexec to bin..."
               Copy-Item "$libexecDir/*.exe" -Destination $binDir -Force -ErrorAction SilentlyContinue
@@ -170,34 +167,44 @@ jobs:
               Copy-Item "$vcpkgDebugBin/*.dll" -Destination $binDir -Force -ErrorAction SilentlyContinue
           }
 
-          Write-Host "Staging bin directory into package..."
-          Copy-Item "$binDir/*" -Destination "$packageDir/bin" -Recurse -Force
-
-          if (Test-Path "$buildDir/share") {
-              Write-Host "Staging share directory into package..."
-              Copy-Item "$buildDir/share/*" -Destination "$packageDir/share" -Recurse -Force
-          }
-
-          $icuFile = Get-ChildItem -Path "$buildDir" -Recurse -Filter "icudt*.dat" | Select-Object -First 1
-          if ($icuFile) {
-              Write-Host "Placing ICU data file directly into bin root ($($icuFile.Name))..."
-              Copy-Item $icuFile.FullName -Destination "$packageDir/bin" -Force
-          }
-
-          Write-Host "Locating and copying DirectX compiler DLLs..."
+          Write-Host "Locating DirectX compiler DLLs..."
           $d3dFile = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "d3dcompiler_47.dll" | Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1
           if ($d3dFile) {
-              Copy-Item $d3dFile.FullName -Destination $binDir -Force
-              Write-Host "Copied d3dcompiler_47.dll from $($d3dFile.FullName)"
+              $sdkBin = $d3dFile.DirectoryName
+              Copy-Item "$sdkBin/d3dcompiler_47.dll" -Destination $binDir -Force -ErrorAction SilentlyContinue
+              Copy-Item "$sdkBin/dxcompiler.dll" -Destination $binDir -Force -ErrorAction SilentlyContinue
+              Copy-Item "$sdkBin/dxil.dll" -Destination $binDir -Force -ErrorAction SilentlyContinue
+              Write-Host "Copied DirectX compiler DLLs from $sdkBin"
           }
 
-          Write-Host "Locating and copying MSVC debug runtime DLLs..."
-          $msvcDebugDir = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\18\Enterprise\VC\Redist\MSVC" -Recurse -Directory -Filter "debug_nonredist" | Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1
+          Write-Host "Locating MSVC debug runtime DLLs..."
+          $msvcDebugDir = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio" -Recurse -Directory -Filter "debug_nonredist" | Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1
           if ($msvcDebugDir) {
               Copy-Item "$($msvcDebugDir.FullName)/*.dll" -Destination $binDir -Force -ErrorAction SilentlyContinue
               Write-Host "Copied MSVC debug runtime DLLs from $($msvcDebugDir.FullName)"
           }
 
+          $ucrtFile = Get-ChildItem -Path "C:\Program Files (x86)\Windows Kits\10\bin" -Recurse -Filter "ucrtbased.dll" | Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1
+          if ($ucrtFile) {
+              Copy-Item $ucrtFile.FullName -Destination $binDir -Force -ErrorAction SilentlyContinue
+              Write-Host "Copied ucrtbased.dll from $($ucrtFile.FullName)"
+          }
+
+          $icuFile = Get-ChildItem -Path "$buildDir" -Recurse -Filter "icudt*.dat" | Select-Object -First 1
+          if ($icuFile) {
+              Copy-Item $icuFile.FullName -Destination $binDir -Force
+              Write-Host "Placed $($icuFile.Name) directly into bin"
+          }
+
+          Write-Host "Staging files into package structure..."
+          New-Item -ItemType Directory -Force -Path "$packageDir/bin"
+          New-Item -ItemType Directory -Force -Path "$packageDir/share"
+
+          Copy-Item "$binDir/*" -Destination "$packageDir/bin" -Recurse -Force
+
+          if (Test-Path "$buildDir/share") {
+              Copy-Item "$buildDir/share/*" -Destination "$packageDir/share" -Recurse -Force
+          }
           Write-Host "Compressing complete Debug package..."
           Compress-Archive -Path "$packageDir/*" -DestinationPath "${{ github.workspace }}/Ladybird-Windows-Debug.zip" -Force
         shell: pwsh
