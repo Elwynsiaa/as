@@ -24,9 +24,15 @@ jobs:
           repository: 'LadybirdBrowser/ladybird'
           ref: 'master'
 
-      - name: Install Latest LLVM
+      - name: Install Latest LLVM 23 from GitHub
         run: |
-          choco install -y llvm --no-progress
+          Write-Host "Downloading LLVM 23 installer..."
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-23.1.6/LLVM-23.1.6-win64.msi"
+          Invoke-WebRequest -Uri $url -OutFile "llvm_installer.msi"
+          
+          Write-Host "Installing LLVM 23 silently..."
+          Start-Process -FilePath ".\llvm_installer.msi" -ArgumentList "/S" -Wait
+          
           echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
         shell: pwsh
           
