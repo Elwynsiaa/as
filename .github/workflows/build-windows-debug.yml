@@ -31,7 +31,7 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile "llvm_installer.msi"
           
           Write-Host "Installing LLVM 23 silently..."
-          Start-Process -FilePath ".\llvm_installer.msi" -ArgumentList "/S" -Wait
+          Start-Process -FilePath ".\llvm_installer.msi" -ArgumentList "/quiet" -Wait
           
           echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
         shell: pwsh
@@ -114,7 +114,7 @@ jobs:
           Invoke-WebRequest -Uri $url -OutFile "llvm_installer.msi"
           
           Write-Host "Installing LLVM 23 silently..."
-          Start-Process -FilePath ".\llvm_installer.msi" -ArgumentList "/S" -Wait
+          Start-Process -FilePath ".\llvm_installer.msi" -ArgumentList "/quiet" -Wait
           
           echo "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
         shell: pwsh
