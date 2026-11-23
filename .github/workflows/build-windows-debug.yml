@@ -58,16 +58,24 @@ jobs:
 
       - name: Patch Unused Variable Warnings
         run: |
-          $file = "Libraries/LibWebView/CrashReport.cpp"
-          if (Test-Path $file) {
-              (Get-Content $file) -replace 'static DisableSandbox s_disable_sandbox', '[[maybe_unused]] static DisableSandbox s_disable_sandbox' | Set-Content $file
+          $file1 = "Libraries/LibWebView/CrashReport.cpp"
+          if (Test-Path $file1) {
+              (Get-Content $file1) -replace 'static DisableSandbox s_disable_sandbox', '[[maybe_unused]] static DisableSandbox s_disable_sandbox' | Set-Content $file1
+          }
+          $file2 = "Services/Compositor/FontSkia.cpp"
+          if (Test-Path $file2) {
+              (Get-Content $file2) -replace 'static bool s_use_test_font_rendering', '[[maybe_unused]] static bool s_use_test_font_rendering' | Set-Content $file2
           }
 
       - name: Configure CMake (Compiles VCPKG Dependencies)
         working-directory: ${{ github.workspace }}
+        env:
+          RUSTFLAGS: "-C target-cpu=x86-64-v3"
         run: |
           cmake --preset Debug -B Build `
             -DENABLE_CI_BASELINE_CPU=ON `
+            -DCMAKE_C_FLAGS="-march=x86-64-v3" `
+            -DCMAKE_CXX_FLAGS="-march=x86-64-v3" `
             -DENABLE_TESTS=OFF `
             -DBUILD_TESTING=OFF `
             -DENABLE_LAGOM_TESTS=OFF
@@ -141,22 +149,30 @@ jobs:
 
       - name: Patch Unused Variable Warnings
         run: |
-          $file = "Libraries/LibWebView/CrashReport.cpp"
-          if (Test-Path $file) {
-              (Get-Content $file) -replace 'static DisableSandbox s_disable_sandbox', '[[maybe_unused]] static DisableSandbox s_disable_sandbox' | Set-Content $file
+          $file1 = "Libraries/LibWebView/CrashReport.cpp"
+          if (Test-Path $file1) {
+              (Get-Content $file1) -replace 'static DisableSandbox s_disable_sandbox', '[[maybe_unused]] static DisableSandbox s_disable_sandbox' | Set-Content $file1
+          }
+          $file2 = "Services/Compositor/FontSkia.cpp"
+          if (Test-Path $file2) {
+              (Get-Content $file2) -replace 'static bool s_use_test_font_rendering', '[[maybe_unused]] static bool s_use_test_font_rendering' | Set-Content $file2
           }
 
       - name: Configure CMake
         working-directory: ${{ github.workspace }}
+        env:
+          RUSTFLAGS: "-C target-cpu=x86-64-v3"
         run: |
           cmake --preset Debug -B Build `
             -DENABLE_CI_BASELINE_CPU=ON `
+            -DCMAKE_C_FLAGS="-march=x86-64-v3" `
+            -DCMAKE_CXX_FLAGS="-march=x86-64-v3" `
             -DENABLE_TESTS=OFF `
             -DBUILD_TESTING=OFF `
             -DENABLE_LAGOM_TESTS=OFF
 
       - name: Build
-        working-directory: ${{ github.workspace }}/Build
+        working-directory: ${{ github.workspace }}
         run: |
           cmake --build .
 
@@ -217,6 +233,7 @@ jobs:
           if (Test-Path "$buildDir/share") {
               Copy-Item "$buildDir/share/*" -Destination "$packageDir/share" -Recurse -Force
           }
+          
           Write-Host "Compressing complete Debug package..."
           Compress-Archive -Path "$packageDir/*" -DestinationPath "${{ github.workspace }}/Ladybird-Windows-Debug.zip" -Force
         shell: pwsh
